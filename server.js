@@ -17,6 +17,11 @@ app.use(express.json({
 const PORT = process.env.PORT || 8080;
 const RENDER_SECRET = process.env.RENDER_SECRET;
 
+const OUTPUT_DIR = path.join(
+  os.tmpdir(),
+  "faceless-renderer-outputs"
+);
+
 function validateSecret(req) {
   if (!RENDER_SECRET) {
     throw new Error("RENDER_SECRET is not configured");
@@ -47,14 +52,62 @@ async function downloadFile(url, destination) {
   await fs.writeFile(destination, buffer);
 }
 
+async function getMediaDuration(filePath) {
+  const { stdout } = await execFileAsync("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    filePath
+  ]);
+
+  const duration = Number(stdout.trim());
+
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error("Unable to determine media duration");
+  }
+
+  return duration;
+}
+
 app.get("/health", (req, res) => {
   res.json({
     ok: true,
-    service: "faceless-video-renderer"
+    service: "faceless-video-renderer",
+    ffmpeg: true
   });
 });
 
+app.get("/files/:filename", async (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename);
+
+    if (!filename.endsWith(".mp4")) {
+      return res.status(400).json({
+        error: "Invalid file"
+      });
+    }
+
+    const filePath = path.join(
+      OUTPUT_DIR,
+      filename
+    );
+
+    await fs.access(filePath);
+
+    res.sendFile(filePath);
+  } catch {
+    res.status(404).json({
+      error: "File not found"
+    });
+  }
+});
+
 app.post("/render", async (req, res) => {
+  let workDir;
+
   try {
     validateSecret(req);
 
@@ -62,6 +115,7 @@ app.post("/render", async (req, res) => {
       job_id,
       scenes,
       audio_url,
+      subtitle_url,
       resolution = "1920x1080",
       fps = 30
     } = req.body;
@@ -84,7 +138,11 @@ app.post("/render", async (req, res) => {
       });
     }
 
-    const workDir = path.join(
+    await fs.mkdir(OUTPUT_DIR, {
+      recursive: true
+    });
+
+    workDir = path.join(
       os.tmpdir(),
       `render-${crypto.randomUUID()}`
     );
@@ -133,6 +191,41 @@ app.post("/render", async (req, res) => {
       audioPath
     );
 
+    const audioDuration =
+      await getMediaDuration(audioPath);
+
+    const sceneDurationTotal =
+      sceneFiles.reduce(
+        (total, scene) =>
+          total + scene.duration,
+        0
+      );
+
+    if (
+      sceneDurationTotal <
+      audioDuration
+    ) {
+      sceneFiles[
+        sceneFiles.length - 1
+      ].duration +=
+        audioDuration -
+        sceneDurationTotal;
+    }
+
+    let subtitlePath = null;
+
+    if (subtitle_url) {
+      subtitlePath = path.join(
+        workDir,
+        "subtitles.vtt"
+      );
+
+      await downloadFile(
+        subtitle_url,
+        subtitlePath
+      );
+    }
+
     const concatPath = path.join(
       workDir,
       "images.txt"
@@ -145,7 +238,8 @@ app.post("/render", async (req, res) => {
       concatText += `duration ${scene.duration}\n`;
     }
 
-    concatText += `file '${sceneFiles[sceneFiles.length - 1].path}'\n`;
+    concatText +=
+      `file '${sceneFiles[sceneFiles.length - 1].path}'\n`;
 
     await fs.writeFile(
       concatPath,
@@ -153,16 +247,30 @@ app.post("/render", async (req, res) => {
     );
 
     const [width, height] =
-      resolution.split("x").map(Number);
+      resolution
+        .split("x")
+        .map(Number);
+
+    if (
+      !Number.isFinite(width) ||
+      !Number.isFinite(height)
+    ) {
+      throw new Error(
+        "Invalid resolution"
+      );
+    }
 
     const silentVideoPath = path.join(
       workDir,
       "silent.mp4"
     );
 
+    const finalFilename =
+      `${job_id}.mp4`;
+
     const finalVideoPath = path.join(
-      workDir,
-      "output.mp4"
+      OUTPUT_DIR,
+      finalFilename
     );
 
     await execFileAsync("ffmpeg", [
@@ -188,18 +296,43 @@ app.post("/render", async (req, res) => {
       silentVideoPath
     ]);
 
-    await execFileAsync("ffmpeg", [
+    const videoInputArgs = [
       "-y",
       "-i",
       silentVideoPath,
       "-i",
-      audioPath,
+      audioPath
+    ];
+
+    if (subtitlePath) {
+      videoInputArgs.push(
+        "-i",
+        subtitlePath
+      );
+    }
+
+    const ffmpegArgs = [
+      ...videoInputArgs,
       "-map",
       "0:v:0",
       "-map",
-      "1:a:0",
+      "1:a:0"
+    ];
+
+    if (subtitlePath) {
+      ffmpegArgs.push(
+        "-vf",
+        `subtitles=${subtitlePath}`
+      );
+    }
+
+    ffmpegArgs.push(
       "-c:v",
-      "copy",
+      "libx264",
+      "-preset",
+      "medium",
+      "-crf",
+      "20",
       "-c:a",
       "aac",
       "-b:a",
@@ -208,14 +341,21 @@ app.post("/render", async (req, res) => {
       "-movflags",
       "+faststart",
       finalVideoPath
-    ]);
+    );
+
+    await execFileAsync(
+      "ffmpeg",
+      ffmpegArgs
+    );
 
     return res.json({
       success: true,
       job_id,
       status: "completed",
       message: "Video rendered successfully",
-      output_path: finalVideoPath
+      duration: audioDuration,
+      output_url:
+        `${req.protocol}://${req.get("host")}/files/${finalFilename}`
     });
 
   } catch (error) {
@@ -227,6 +367,17 @@ app.post("/render", async (req, res) => {
       success: false,
       error: error.message
     });
+
+  } finally {
+    if (workDir) {
+      await fs.rm(
+        workDir,
+        {
+          recursive: true,
+          force: true
+        }
+      ).catch(() => {});
+    }
   }
 });
 
