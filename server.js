@@ -79,7 +79,56 @@ app.get("/health", (req, res) => {
     ffmpeg: true
   });
 });
+app.get("/test-render", async (req, res) => {
+  const testFilename = "railway-test.mp4";
+  const testPath = path.join(
+    OUTPUT_DIR,
+    testFilename
+  );
 
+  try {
+    await fs.mkdir(OUTPUT_DIR, {
+      recursive: true
+    });
+
+    await execFileAsync("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=black:s=1280x720:d=5",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:duration=5",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      testPath
+    ]);
+
+    res.json({
+      success: true,
+      message: "FFmpeg successfully created a real MP4",
+      output_url:
+        `${req.protocol}://${req.get("host")}/files/${testFilename}`
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 app.get("/files/:filename", async (req, res) => {
   try {
     const filename = path.basename(req.params.filename);
