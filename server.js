@@ -192,13 +192,21 @@ app.post("/render", async (req, res) => {
     validateSecret(req);
 
     const {
-      job_id,
-      scenes,
-      audio_url,
-      subtitle_url,
-      resolution = "1920x1080",
-      fps = 30
-    } = req.body;
+  job_id,
+  scenes,
+  audio_url,
+  subtitle_url,
+  resolution = "1920x1080",
+  fps = 30
+} = req.body;
+
+const normalizedFps = Number(
+  String(fps).replace(/fps$/i, "").trim()
+);
+
+if (!Number.isFinite(normalizedFps) || normalizedFps <= 0) {
+  throw new Error("Invalid framerate");
+}
 
     if (!job_id) {
       return res.status(400).json({
@@ -364,7 +372,7 @@ app.post("/render", async (req, res) => {
       "-vf",
       `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`,
       "-r",
-      String(fps),
+String(normalizedFps),
       "-c:v",
       "libx264",
       "-preset",
