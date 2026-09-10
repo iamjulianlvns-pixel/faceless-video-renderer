@@ -10,30 +10,61 @@ const execFileAsync = promisify(execFile);
 
 const app = express();
 
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, x-client-token, x-render-secret"
+  );
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, OPTIONS"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
 app.use(express.json({
   limit: "2mb"
 }));
 
 const PORT = process.env.PORT || 8080;
 const RENDER_SECRET = process.env.RENDER_SECRET;
-
+const CLIENT_RENDER_TOKEN =
+  process.env.CLIENT_RENDER_TOKEN;
 const OUTPUT_DIR = path.join(
   os.tmpdir(),
   "faceless-renderer-outputs"
 );
 
 function validateSecret(req) {
-  if (!RENDER_SECRET) {
-    throw new Error("RENDER_SECRET is not configured");
+  const suppliedSecret =
+    req.headers["x-render-secret"];
+
+  const suppliedClientToken =
+    req.headers["x-client-token"];
+
+  if (
+    RENDER_SECRET &&
+    suppliedSecret === RENDER_SECRET
+  ) {
+    return;
   }
 
-  const suppliedSecret = req.headers["x-render-secret"];
-
-  if (suppliedSecret !== RENDER_SECRET) {
-    const error = new Error("Unauthorized");
-    error.status = 401;
-    throw error;
+  if (
+    CLIENT_RENDER_TOKEN &&
+    suppliedClientToken === CLIENT_RENDER_TOKEN
+  ) {
+    return;
   }
+
+  const error = new Error("Unauthorized");
+  error.status = 401;
+  throw error;
 }
 
 async function downloadFile(url, destination) {
