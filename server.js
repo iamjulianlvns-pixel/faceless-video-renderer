@@ -612,78 +612,44 @@ async function crossfadePair(
   outputPath,
   transitionDuration = 0.45
 ) {
-  const fade = Math.min(
-    transitionDuration,
-    Math.max(
-      0.05,
-      firstDuration / 3
-    ),
-    Math.max(
-      0.05,
-      secondDuration / 3
-    )
+  // Reliable scene joining.
+  // Both scene videos are already rendered with identical settings.
+  // Use FFmpeg concat demuxer instead of xfade/filter_complex.
+  // This avoids Railway filter-graph failures.
+
+  const listPath = path.join(
+    path.dirname(outputPath),
+    `concat-${crypto.randomUUID()}.txt`
   );
 
-  const offset =
-    Math.max(
-      0.05,
-      firstDuration - fade
-    );
+  const listContent =
+    `file '${firstPath.replace(/'/g, "'\\''")}'\n` +
+    `file '${secondPath.replace(/'/g, "'\\''")}'\n`;
 
-  const filter =
-  `[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
-  `[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
-  `[v0][v1]xfade=` +
-  `transition=fade:` +
-  `duration=${fade.toFixed(3)}:` +
-  `offset=${offset.toFixed(3)},` +
-  `format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v]`;
+  await fs.writeFile(listPath, listContent, "utf8");
 
-  await execFileAsync(
-    "ffmpeg",
-    [
+  try {
+    await execFileAsync("ffmpeg", [
       "-loglevel",
       "error",
       "-y",
-
+      "-f",
+      "concat",
+      "-safe",
+      "0",
       "-i",
-      firstPath,
-
-      "-i",
-      secondPath,
-
-      "-filter_complex",
-      filter,
-
-      "-map",
-      "[v]",
-
-      "-an",
-
-      "-c:v",
-      "libx264",
-
-      "-preset",
-      "veryfast",
-
-      "-crf",
-      "19",
-
-      "-pix_fmt",
-      "yuv420p",
-
+      listPath,
+      "-c",
+      "copy",
       "-movflags",
       "+faststart",
-
       outputPath
-    ]
-  );
+    ]);
+  } finally {
+    await fs.rm(listPath, { force: true }).catch(() => {});
+  }
 
-  return (
-    firstDuration +
-    secondDuration -
-    fade
-  );
+  return firstDuration + secondDuration;
 }
 
 async function buildCrossfadedTimeline(
