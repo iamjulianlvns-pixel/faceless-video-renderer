@@ -271,28 +271,20 @@ function chunkWords(words, maxWords = 8) {
   return chunks;
 }
 
-function buildSubtitleAss(
-  transcription,
-  width,
-  height
-) {
-  let words = Array.isArray(
-    transcription.words
-  )
+function buildSubtitleAss(transcription, width, height) {
+  let words = Array.isArray(transcription?.words)
     ? transcription.words
     : [];
 
   if (
     !words.length &&
-    Array.isArray(transcription.segments)
+    Array.isArray(transcription?.segments)
   ) {
-    words = transcription.segments.map(
-      (segment) => ({
-        text: segment.text,
-        start: segment.start,
-        end: segment.end
-      })
-    );
+    words = transcription.segments.map((segment) => ({
+      text: segment.text,
+      start: segment.start,
+      end: segment.end
+    }));
   }
 
   if (!words.length) {
@@ -310,8 +302,8 @@ function buildSubtitleAss(
     width >= 1800
       ? 52
       : width >= 1000
-      ? 44
-      : 38;
+        ? 44
+        : 38;
 
   const marginV =
     height > width
@@ -319,51 +311,46 @@ function buildSubtitleAss(
       : 90;
 
   const header =
-    `[Script Info]\n` +
-    `ScriptType: v4.00+\n` +
-    `PlayResX: ${width}\n` +
-    `PlayResY: ${height}\n` +
-    `WrapStyle: 2\n` +
-    `ScaledBorderAndShadow: yes\n\n` +
-    `[V4+ Styles]\n` +
-    `Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n` +
-    `Style: Documentary,DejaVu Sans,${fontSize},&H10FFFFFF,&H10FFFFFF,&H78000000,&H90000000,0,0,0,0,100,100,0,0,1,2,1,2,${Math.round(
-      width * 0.08
-    )},${Math.round(
-      width * 0.08
-    )},${marginV},1\n\n` +
-    `[Events]\n` +
-    `Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n`;
+`[Script Info]
+ScriptType: v4.00+
+PlayResX: ${width}
+PlayResY: ${height}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Documentary,DejaVu Sans,${fontSize},&H00FFFFFF,&H00FFFFFF,&H64000000,&H00000000,0,0,0,0,100,100,0,0,1,2,1,2,80,80,${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+`;
 
   const dialogue = chunks
     .map((chunk) => {
       const start = Math.max(
         0,
-        Number(chunk[0].start) || 0
+        Number(chunk[0]?.start) || 0
       );
 
       const end = Math.max(
         start + 0.05,
-        Number(
-          chunk[chunk.length - 1].end
-        ) || start + 1
+        Number(chunk[chunk.length - 1]?.end) ||
+          start + 1
       );
 
       const text = escapeAss(
         chunk
-          .map((word) => word.text)
+          .map((word) => String(word.text || "").trim())
+          .filter(Boolean)
           .join(" ")
       );
 
-      return (
-        `Dialogue: 0,${assTime(
-          start
-        )},${assTime(
-          end
-        )},Documentary,,0,0,0,,` +
-        `{\\fad(180,220)}${text}`
-      );
+      if (!text) return "";
+
+      return `Dialogue: 0,${assTime(start)},${assTime(end)},Documentary,,0,0,0,,{\\fad(180,220)}${text}`;
     })
+    .filter(Boolean)
     .join("\n");
 
   return header + dialogue + "\n";
