@@ -486,39 +486,68 @@ async function createSceneVideo({
   height,
   isImage
 }) {
-  const inputArgs = isImage
-    ? [
-        "-loop",
-        "1",
+  let safeInputPath = inputPath;
+  let normalizedPath = null;
+
+  try {
+    // Large Base44 images can cause FFmpeg to use excessive
+    // resources when the same image is decoded twice.
+    // Normalize images before cinematic processing.
+    if (isImage) {
+      normalizedPath = path.join(
+        path.dirname(outputPath),
+        `normalized-${crypto.randomUUID()}.jpg`
+      );
+
+      await execFileAsync("ffmpeg", [
+        "-loglevel",
+        "error",
+        "-y",
         "-i",
         inputPath,
-        "-loop",
+        "-vf",
+        "scale=2048:2048:force_original_aspect_ratio=decrease:flags=lanczos",
+        "-frames:v",
         "1",
-        "-i",
-        inputPath
-      ]
-    : [
-        "-stream_loop",
-        "-1",
-        "-i",
-        inputPath,
-        "-stream_loop",
-        "-1",
-        "-i",
-        inputPath
-      ];
+        "-q:v",
+        "2",
+        normalizedPath
+      ]);
 
-  const filter = [
-    `[0:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},boxblur=12:2,eq=brightness=-0.14:saturation=0.82,format=yuv420p[bg]`,
+      safeInputPath = normalizedPath;
+    }
 
-    `[1:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p[fg]`,
+    const inputArgs = isImage
+      ? [
+          "-loop",
+          "1",
+          "-i",
+          safeInputPath,
+          "-loop",
+          "1",
+          "-i",
+          safeInputPath
+        ]
+      : [
+          "-stream_loop",
+          "-1",
+          "-i",
+          safeInputPath,
+          "-stream_loop",
+          "-1",
+          "-i",
+          safeInputPath
+        ];
 
-    `[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p,settb=AVTB[v]`
-  ].join(";");
+    const filter = [
+      `[0:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},boxblur=12:2,eq=brightness=-0.14:saturation=0.82,format=yuv420p[bg]`,
 
-  await execFileAsync(
-    "ffmpeg",
-    [
+      `[1:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p[fg]`,
+
+      `[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p,settb=AVTB[v]`
+    ].join(";");
+
+    await execFileAsync("ffmpeg", [
       "-loglevel",
       "error",
       "-y",
@@ -555,8 +584,14 @@ async function createSceneVideo({
       "+faststart",
 
       outputPath
-    ]
-  );
+    ]);
+  } finally {
+    if (normalizedPath) {
+      await fs.rm(normalizedPath, {
+        force: true
+      }).catch(() => {});
+    }
+  }
 }
 
 /*
