@@ -1216,13 +1216,6 @@ app.post(
         audioPath
       ];
 
-      if (subtitlePath) {
-        finalArgs.push(
-          "-vf",
-          `ass=${subtitlePath}`
-        );
-      }
-
       finalArgs.push(
         "-map",
         "0:v:0",
