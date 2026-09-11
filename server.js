@@ -517,50 +517,78 @@ async function createSceneVideo({
      */
 
     const inputArgs = isImage
-      ? [
-          "-loop", "1",
-          "-framerate", "30",
-          "-i", safeInputPath
-        ]
-      : [
-          "-stream_loop", "-1",
-          "-i", safeInputPath
-        ];
+  ? [
+      "-loop",
+      "1",
+      "-framerate",
+      "30",
+      "-i",
+      safeInputPath
+    ]
+  : [
+      "-stream_loop",
+      "-1",
+      "-i",
+      safeInputPath
+    ];
 
-    const videoFilter =
-      `fps=30,` +
-      `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,` +
-      `crop=${width}:${height},` +
-      `eq=brightness=-0.04:contrast=1.03:saturation=0.92,` +
-      `format=yuv420p`;
+const videoFilter =
+  `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,` +
+  `crop=${width}:${height},` +
+  `eq=brightness=-0.04:contrast=1.03:saturation=0.92,` +
+  `format=yuv420p`;
 
-    await execFileAsync(
-      "ffmpeg",
-      [
-        "-loglevel", "error",
-        "-y",
+await execFileAsync(
+  "ffmpeg",
+  [
+    "-loglevel",
+    "error",
 
-        ...inputArgs,
+    "-threads",
+    "1",
 
-        "-vf", videoFilter,
+    "-filter_threads",
+    "1",
 
-        "-t", String(duration),
-        "-r", "30",
+    "-filter_complex_threads",
+    "1",
 
-        "-an",
+    "-y",
 
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-crf", "21",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
+    ...inputArgs,
 
-        outputPath
-      ],
-      {
-        maxBuffer: 50 * 1024 * 1024
-      }
-    );
+    "-vf",
+    videoFilter,
+
+    "-t",
+    String(duration),
+
+    "-r",
+    "30",
+
+    "-an",
+
+    "-c:v",
+    "libx264",
+
+    "-preset",
+    "ultrafast",
+
+    "-crf",
+    "23",
+
+    "-pix_fmt",
+    "yuv420p",
+
+    "-movflags",
+    "+faststart",
+
+    outputPath
+  ],
+  {
+    maxBuffer: 50 * 1024 * 1024
+  }
+);
 
     return;
   } finally {
