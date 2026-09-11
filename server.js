@@ -631,13 +631,13 @@ async function crossfadePair(
     );
 
   const filter =
-    `[0:v]settb=AVTB,format=yuv420p[v0];` +
-    `[1:v]settb=AVTB,format=yuv420p[v1];` +
-    `[v0][v1]xfade=` +
-    `transition=fade:` +
-    `duration=${fade.toFixed(3)}:` +
-    `offset=${offset.toFixed(3)},` +
-    `format=yuv420p,settb=AVTB[v]`;
+  `[0:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
+  `[1:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
+  `[v0][v1]xfade=` +
+  `transition=fade:` +
+  `duration=${fade.toFixed(3)}:` +
+  `offset=${offset.toFixed(3)},` +
+  `format=yuv420p,settb=AVTB,setpts=PTS-STARTPTS[v]`;
 
   await execFileAsync(
     "ffmpeg",
