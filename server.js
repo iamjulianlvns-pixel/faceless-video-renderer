@@ -6,7 +6,9 @@ import crypto from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
-const execFileAsync = promisify(execFile);
+const execFileAsync = (file, args, options = {}) =>
+  promisify(execFile)(file, args, { maxBuffer: 50 * 1024 * 1024, ...options });
+
 const app = express();
 
 app.use((req, res, next) => {
@@ -17,9 +19,7 @@ app.use((req, res, next) => {
   );
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
-  if (req.method === "OPTIONS") {
-    return res.sendStatus(204);
-  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
 
   next();
 });
@@ -42,12 +42,7 @@ function validateSecret(req) {
   const suppliedSecret = req.headers["x-render-secret"];
   const suppliedClientToken = req.headers["x-client-token"];
 
-  if (
-    RENDER_SECRET &&
-    suppliedSecret === RENDER_SECRET
-  ) {
-    return;
-  }
+  if (RENDER_SECRET && suppliedSecret === RENDER_SECRET) return;
 
   if (
     CLIENT_RENDER_TOKEN &&
@@ -67,14 +62,10 @@ async function downloadFile(url, destination) {
   });
 
   if (!response.ok) {
-    throw new Error(
-      `Failed to download file: ${response.status}`
-    );
+    throw new Error(`Failed to download file: ${response.status}`);
   }
 
-  const buffer = Buffer.from(
-    await response.arrayBuffer()
-  );
+  const buffer = Buffer.from(await response.arrayBuffer());
 
   await fs.writeFile(destination, buffer);
 }
@@ -92,10 +83,7 @@ async function getMediaDuration(filePath) {
 
   const duration = Number(stdout.trim());
 
-  if (
-    !Number.isFinite(duration) ||
-    duration <= 0
-  ) {
+  if (!Number.isFinite(duration) || duration <= 0) {
     throw new Error(
       `Unable to determine media duration: ${filePath}`
     );
@@ -104,10 +92,7 @@ async function getMediaDuration(filePath) {
   return duration;
 }
 
-function getOutputSize(
-  aspectRatio,
-  requestedResolution
-) {
+function getOutputSize(aspectRatio, requestedResolution) {
   if (requestedResolution) {
     const match = String(requestedResolution).match(
       /^(\d+)x(\d+)$/
@@ -147,15 +132,11 @@ function getOutputSize(
   }
 }
 
-function normalizeScenes(
-  scenes,
-  audioDuration
-) {
+function normalizeScenes(scenes, audioDuration) {
   const raw = scenes.map((scene) => {
     const requested = Number(scene.duration);
 
-    return Number.isFinite(requested) &&
-      requested > 0
+    return Number.isFinite(requested) && requested > 0
       ? requested
       : 0;
   });
@@ -174,9 +155,9 @@ function normalizeScenes(
     const scale =
       audioDuration / suppliedTotal;
 
-    durations = raw.map((duration) =>
-      duration > 0
-        ? duration * scale
+    durations = raw.map((d) =>
+      d > 0
+        ? d * scale
         : fallbackDuration
     );
   } else {
@@ -216,7 +197,8 @@ function assTime(seconds) {
 
   const m = totalMinutes % 60;
 
-  const h = Math.floor(totalMinutes / 60);
+  const h =
+    Math.floor(totalMinutes / 60);
 
   return `${h}:${String(m).padStart(
     2,
@@ -239,11 +221,9 @@ function escapeAss(text) {
     .trim();
 }
 
-function chunkWords(
-  words,
-  maxWords = 8
-) {
+function chunkWords(words, maxWords = 8) {
   const chunks = [];
+
   let current = [];
 
   for (const word of words) {
@@ -251,9 +231,7 @@ function chunkWords(
       word.word ?? word.text ?? ""
     ).trim();
 
-    if (!clean) {
-      continue;
-    }
+    if (!clean) continue;
 
     current.push({
       text: clean,
@@ -319,13 +297,11 @@ function buildSubtitleAss(
     width >= 1800
       ? 52
       : width >= 1000
-        ? 44
-        : 38;
+      ? 44
+      : 38;
 
   const marginV =
-    height > width
-      ? 150
-      : 90;
+    height > width ? 150 : 90;
 
   const header =
     `[Script Info]\n` +
@@ -360,27 +336,29 @@ function buildSubtitleAss(
 
       const text = escapeAss(
         chunk
-          .map((word) => word.text)
+          .map((w) => w.text)
           .join(" ")
       );
 
-      return (
-        `Dialogue: 0,` +
-        `${assTime(start)},` +
-        `${assTime(end)},` +
-        `Documentary,,0,0,0,,` +
-        `{\\fad(180,220)}` +
-        text
-      );
+      return `Dialogue: 0,${assTime(
+        start
+      )},${assTime(
+        end
+      )},Documentary,,0,0,0,,{\\fad(180,220)}${text}`;
     })
     .join("\n");
 
-  return header + dialogue + "\n";
+  return (
+    header +
+    dialogue +
+    "\n"
+  );
 }
 
 async function transcribeAudio(
   audioPath,
-  language
+  language,
+  workDir
 ) {
   if (!OPENAI_API_KEY) {
     throw new Error(
@@ -406,9 +384,7 @@ async function transcribeAudio(
     "file",
     new Blob(
       [buffer],
-      {
-        type: "audio/mpeg"
-      }
+      { type: "audio/mpeg" }
     ),
     "voiceover.mp3"
   );
@@ -478,7 +454,16 @@ async function transcribeAudio(
     );
   }
 
-  return body;
+  const subtitlePath =
+    path.join(
+      workDir,
+      "subtitles.ass"
+    );
+
+  return {
+    transcription: body,
+    subtitlePath
+  };
 }
 
 async function createSceneVideo({
@@ -506,53 +491,39 @@ async function createSceneVideo({
   const filter = [
     "split=2[bg][fg]",
 
-    `[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,` +
-      `crop=${width}:${height},` +
-      `gblur=sigma=22,` +
-      `eq=brightness=-0.16:saturation=0.82[bg2]`,
+    `[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=22,eq=brightness=-0.16:saturation=0.82[bg2]`,
 
     `[fg]scale=${width}:${height}:force_original_aspect_ratio=decrease[fg2]`,
 
-    `[bg2][fg2]overlay=(W-w)/2:(H-h)/2,` +
-      `format=yuv420p,` +
-      `settb=AVTB[v]`
+    `[bg2][fg2]overlay=(W-w)/2:(H-h)/2,format=yuv420p,settb=AVTB[v]`
   ].join(";");
 
   await execFileAsync(
     "ffmpeg",
     [
+      "-loglevel",
+      "error",
       "-y",
       ...inputArgs,
-
       "-filter_complex",
       filter,
-
       "-map",
       "[v]",
-
       "-t",
       String(duration),
-
       "-r",
       "30",
-
       "-an",
-
       "-c:v",
       "libx264",
-
       "-preset",
       "veryfast",
-
       "-crf",
       "19",
-
       "-pix_fmt",
       "yuv420p",
-
       "-movflags",
       "+faststart",
-
       outputPath
     ]
   );
@@ -621,11 +592,11 @@ async function crossfadeScenes(
       `xf${i}`;
 
     graph.push(
-      `[${currentLabel}][v${i}]` +
-      `xfade=transition=fade:` +
-      `duration=${fade.toFixed(3)}:` +
-      `offset=${offset.toFixed(3)},` +
-      `format=yuv420p[${outLabel}]`
+      `[${currentLabel}][v${i}]xfade=transition=fade:duration=${fade.toFixed(
+        3
+      )}:offset=${offset.toFixed(
+        3
+      )},format=yuv420p[${outLabel}]`
     );
 
     currentLabel =
@@ -640,30 +611,24 @@ async function crossfadeScenes(
   await execFileAsync(
     "ffmpeg",
     [
+      "-loglevel",
+      "error",
       "-y",
       ...inputs,
-
       "-filter_complex",
       graph.join(";"),
-
       "-map",
       `[${currentLabel}]`,
-
       "-c:v",
       "libx264",
-
       "-preset",
       "veryfast",
-
       "-crf",
       "18",
-
       "-pix_fmt",
       "yuv420p",
-
       "-movflags",
       "+faststart",
-
       outputPath
     ]
   );
@@ -700,45 +665,34 @@ app.get(
     try {
       await fs.mkdir(
         OUTPUT_DIR,
-        {
-          recursive: true
-        }
+        { recursive: true }
       );
 
       await execFileAsync(
         "ffmpeg",
         [
+          "-loglevel",
+          "error",
           "-y",
-
           "-f",
           "lavfi",
-
           "-i",
           "color=c=black:s=1280x720:d=5",
-
           "-f",
           "lavfi",
-
           "-i",
           "sine=frequency=440:duration=5",
-
           "-c:v",
           "libx264",
-
           "-pix_fmt",
           "yuv420p",
-
           "-c:a",
           "aac",
-
           "-b:a",
           "192k",
-
           "-shortest",
-
           "-movflags",
           "+faststart",
-
           testPath
         ]
       );
@@ -757,8 +711,7 @@ app.get(
 
       res.status(500).json({
         success: false,
-        error:
-          error.message
+        error: error.message
       });
     }
   }
@@ -798,12 +751,10 @@ app.get(
         filePath
       );
     } catch {
-      res
-        .status(404)
-        .json({
-          error:
-            "File not found"
-        });
+      res.status(404).json({
+        error:
+          "File not found"
+      });
     }
   }
 );
@@ -947,7 +898,9 @@ app.post(
 
         if (!mediaUrl) {
           throw new Error(
-            `Scene ${i + 1} has no video_url or image_url`
+            `Scene ${
+              i + 1
+            } has no video_url or image_url`
           );
         }
 
@@ -959,13 +912,17 @@ app.post(
         const inputPath =
           path.join(
             workDir,
-            `source-${i + 1}${extension}`
+            `source-${
+              i + 1
+            }${extension}`
           );
 
         const outputPath =
           path.join(
             workDir,
-            `scene-${i + 1}.mp4`
+            `scene-${
+              i + 1
+            }.mp4`
           );
 
         await downloadFile(
@@ -1021,10 +978,13 @@ app.post(
       } else if (
         subtitles
       ) {
-        const transcription =
+        const {
+          transcription
+        } =
           await transcribeAudio(
             audioPath,
-            subtitle_language
+            subtitle_language,
+            workDir
           );
 
         subtitlePath =
@@ -1058,10 +1018,8 @@ app.post(
 
       const finalArgs = [
         "-y",
-
         "-i",
         visualPath,
-
         "-i",
         audioPath
       ];
@@ -1076,53 +1034,43 @@ app.post(
       finalArgs.push(
         "-map",
         "0:v:0",
-
         "-map",
         "1:a:0",
-
         "-r",
         String(
           normalizedFps
         ),
-
         "-c:v",
         "libx264",
-
         "-preset",
         "medium",
-
         "-crf",
         "18",
-
         "-pix_fmt",
         "yuv420p",
-
         "-profile:v",
         "high",
-
         "-level",
         "4.1",
-
         "-c:a",
         "aac",
-
         "-b:a",
         "192k",
-
         "-af",
         "loudnorm=I=-14:TP=-1.5:LRA=11",
-
         "-shortest",
-
         "-movflags",
         "+faststart",
-
         finalVideoPath
       );
 
       await execFileAsync(
         "ffmpeg",
-        finalArgs
+        [
+          "-loglevel",
+          "error",
+          ...finalArgs
+        ]
       );
 
       return res.json({
