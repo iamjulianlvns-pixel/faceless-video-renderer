@@ -1194,86 +1194,118 @@ app.post(
         );
       }
 
-      /*
-       * Final export.
-       */
-      const finalFilename =
-        `${job_id}.mp4`;
+/*
+ * Final export.
+ *
+ * IMPORTANT:
+ * The visual timeline is already encoded as H.264.
+ * Do NOT re-encode the video unless subtitles must be burned in.
+ * Re-encoding the entire 4-minute 1080p video was causing Railway
+ * to kill FFmpeg with SIGKILL.
+ */
 
-      const finalVideoPath =
-        path.join(
-          OUTPUT_DIR,
-          finalFilename
-        );
+const finalFilename = `${job_id}.mp4`;
 
-      const finalArgs = [
-        "-y",
+const finalVideoPath = path.join(
+  OUTPUT_DIR,
+  finalFilename
+);
 
-        "-i",
-        visualPath,
+const finalArgs = [
+  "-y",
 
-        "-i",
-        audioPath
-      ];
+  "-i",
+  visualPath,
 
-      finalArgs.push(
-        "-map",
-        "0:v:0",
+  "-i",
+  audioPath
+];
 
-        "-map",
-        "1:a:0",
+if (subtitlePath) {
+  /*
+   * Subtitles require video re-encoding because they are burned
+   * directly into the picture.
+   */
+  finalArgs.push(
+    "-vf",
+    `subtitles=${subtitlePath}`,
 
-        "-r",
-        String(
-          normalizedFps
-        ),
+    "-map",
+    "0:v:0",
 
-        "-c:v",
-        "libx264",
+    "-map",
+    "1:a:0",
 
-        "-preset",
-        "medium",
+    "-r",
+    String(normalizedFps),
 
-        "-crf",
-        "18",
+    "-c:v",
+    "libx264",
 
-        "-pix_fmt",
-        "yuv420p",
+    "-preset",
+    "ultrafast",
 
-        "-profile:v",
-        "high",
+    "-crf",
+    "21",
 
-        "-level",
-        "4.1",
+    "-pix_fmt",
+    "yuv420p",
 
-        "-c:a",
-        "aac",
+    "-profile:v",
+    "high",
 
-        "-b:a",
-        "192k",
+    "-level",
+    "4.1"
+  );
+} else {
+  /*
+   * No subtitles:
+   * copy the already-rendered H.264 video.
+   *
+   * This is the critical memory/resource fix.
+   */
+  finalArgs.push(
+    "-map",
+    "0:v:0",
 
-        "-af",
-        "loudnorm=I=-14:TP=-1.5:LRA=11",
+    "-map",
+    "1:a:0",
 
-        "-t",
-        String(
-          audioDuration
-        ),
+    "-c:v",
+    "copy"
+  );
+}
 
-        "-movflags",
-        "+faststart",
+finalArgs.push(
+  "-c:a",
+  "aac",
 
-        finalVideoPath
-      );
+  "-b:a",
+  "192k",
 
-      await execFileAsync(
-        "ffmpeg",
-        [
-          "-loglevel",
-          "error",
-          ...finalArgs
-        ]
-      );
+  "-af",
+  "loudnorm=I=-14:TP=-1.5:LRA=11",
+
+  "-t",
+  String(audioDuration),
+
+  "-movflags",
+  "+faststart",
+
+  finalVideoPath
+);
+
+await execFileAsync(
+  "ffmpeg",
+  [
+    "-loglevel",
+    "error",
+    ...finalArgs
+  ],
+  {
+    maxBuffer: 50 * 1024 * 1024
+  }
+);
 
       return res.json({
         success: true,
