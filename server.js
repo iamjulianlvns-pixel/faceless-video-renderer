@@ -7,7 +7,10 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 
 const execFileAsync = (file, args, options = {}) =>
-  promisify(execFile)(file, args, { maxBuffer: 50 * 1024 * 1024, ...options });
+  promisify(execFile)(file, args, {
+    maxBuffer: 50 * 1024 * 1024,
+    ...options
+  });
 
 const app = express();
 
@@ -19,7 +22,9 @@ app.use((req, res, next) => {
   );
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
 
-  if (req.method === "OPTIONS") return res.sendStatus(204);
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
 
   next();
 });
@@ -27,22 +32,27 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "2mb" }));
 
 const PORT = Number(process.env.PORT || 8080);
+
 const RENDER_SECRET = process.env.RENDER_SECRET;
 const CLIENT_RENDER_TOKEN = process.env.CLIENT_RENDER_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const TRANSCRIPTION_MODEL = process.env.TRANSCRIPTION_MODEL || "whisper-1";
-const DEFAULT_LANGUAGE = process.env.SUBTITLE_LANGUAGE || "en";
 
-const OUTPUT_DIR = path.join(
-  os.tmpdir(),
-  "faceless-renderer-outputs"
-);
+const TRANSCRIPTION_MODEL =
+  process.env.TRANSCRIPTION_MODEL || "whisper-1";
+
+const DEFAULT_LANGUAGE =
+  process.env.SUBTITLE_LANGUAGE || "en";
+
+const OUTPUT_DIR =
+  path.join(os.tmpdir(), "faceless-renderer-outputs");
 
 function validateSecret(req) {
   const suppliedSecret = req.headers["x-render-secret"];
   const suppliedClientToken = req.headers["x-client-token"];
 
-  if (RENDER_SECRET && suppliedSecret === RENDER_SECRET) return;
+  if (RENDER_SECRET && suppliedSecret === RENDER_SECRET) {
+    return;
+  }
 
   if (
     CLIENT_RENDER_TOKEN &&
@@ -62,10 +72,14 @@ async function downloadFile(url, destination) {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to download file: ${response.status}`);
+    throw new Error(
+      `Failed to download file: ${response.status}`
+    );
   }
 
-  const buffer = Buffer.from(await response.arrayBuffer());
+  const buffer = Buffer.from(
+    await response.arrayBuffer()
+  );
 
   await fs.writeFile(destination, buffer);
 }
@@ -155,9 +169,9 @@ function normalizeScenes(scenes, audioDuration) {
     const scale =
       audioDuration / suppliedTotal;
 
-    durations = raw.map((d) =>
-      d > 0
-        ? d * scale
+    durations = raw.map((duration) =>
+      duration > 0
+        ? duration * scale
         : fallbackDuration
     );
   } else {
@@ -175,7 +189,7 @@ function normalizeScenes(scenes, audioDuration) {
     audioDuration - total;
 
   return durations.map((duration) =>
-    Math.max(0.25, duration)
+    Math.max(0.5, duration)
   );
 }
 
@@ -223,7 +237,6 @@ function escapeAss(text) {
 
 function chunkWords(words, maxWords = 8) {
   const chunks = [];
-
   let current = [];
 
   for (const word of words) {
@@ -301,7 +314,9 @@ function buildSubtitleAss(
       : 38;
 
   const marginV =
-    height > width ? 150 : 90;
+    height > width
+      ? 150
+      : 90;
 
   const header =
     `[Script Info]\n` +
@@ -336,29 +351,27 @@ function buildSubtitleAss(
 
       const text = escapeAss(
         chunk
-          .map((w) => w.text)
+          .map((word) => word.text)
           .join(" ")
       );
 
-      return `Dialogue: 0,${assTime(
-        start
-      )},${assTime(
-        end
-      )},Documentary,,0,0,0,,{\\fad(180,220)}${text}`;
+      return (
+        `Dialogue: 0,${assTime(
+          start
+        )},${assTime(
+          end
+        )},Documentary,,0,0,0,,` +
+        `{\\fad(180,220)}${text}`
+      );
     })
     .join("\n");
 
-  return (
-    header +
-    dialogue +
-    "\n"
-  );
+  return header + dialogue + "\n";
 }
 
 async function transcribeAudio(
   audioPath,
-  language,
-  workDir
+  language
 ) {
   if (!OPENAI_API_KEY) {
     throw new Error(
@@ -454,18 +467,17 @@ async function transcribeAudio(
     );
   }
 
-  const subtitlePath =
-    path.join(
-      workDir,
-      "subtitles.ass"
-    );
-
-  return {
-    transcription: body,
-    subtitlePath
-  };
+  return body;
 }
 
+/*
+ * Create one cinematic scene.
+ *
+ * Important reliability change:
+ * We use TWO FFmpeg inputs instead of split=2.
+ * This avoids the pixel-format negotiation problem
+ * seen with some JPEG sources.
+ */
 async function createSceneVideo({
   inputPath,
   outputPath,
@@ -479,9 +491,17 @@ async function createSceneVideo({
         "-loop",
         "1",
         "-i",
+        inputPath,
+        "-loop",
+        "1",
+        "-i",
         inputPath
       ]
     : [
+        "-stream_loop",
+        "-1",
+        "-i",
+        inputPath,
         "-stream_loop",
         "-1",
         "-i",
@@ -489,13 +509,11 @@ async function createSceneVideo({
       ];
 
   const filter = [
-    "split=2[bg][fg]",
+    `[0:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},boxblur=12:2,eq=brightness=-0.14:saturation=0.82,format=yuv420p[bg]`,
 
-    `[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=22,eq=brightness=-0.16:saturation=0.82[bg2]`,
+    `[1:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p[fg]`,
 
-    `[fg]scale=${width}:${height}:force_original_aspect_ratio=decrease[fg2]`,
-
-    `[bg2][fg2]overlay=(W-w)/2:(H-h)/2,format=yuv420p,settb=AVTB[v]`
+    `[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p,settb=AVTB[v]`
   ].join(";");
 
   await execFileAsync(
@@ -504,36 +522,145 @@ async function createSceneVideo({
       "-loglevel",
       "error",
       "-y",
+
       ...inputArgs,
+
       "-filter_complex",
       filter,
+
       "-map",
       "[v]",
+
       "-t",
       String(duration),
+
       "-r",
       "30",
+
       "-an",
+
       "-c:v",
       "libx264",
+
       "-preset",
       "veryfast",
+
       "-crf",
       "19",
+
       "-pix_fmt",
       "yuv420p",
+
       "-movflags",
       "+faststart",
+
       outputPath
     ]
   );
 }
 
-async function crossfadeScenes(
-  scenePaths,
-  durations,
+/*
+ * Crossfade TWO videos at a time.
+ *
+ * This is the major reliability fix.
+ *
+ * The old renderer created one huge:
+ *
+ * scene1 + scene2 + scene3 + ... + scene10
+ *
+ * xfade graph.
+ *
+ * Railway had to decode all of them simultaneously.
+ *
+ * This version only handles two videos per FFmpeg
+ * process, then moves on to the next scene.
+ */
+async function crossfadePair(
+  firstPath,
+  secondPath,
+  firstDuration,
+  secondDuration,
   outputPath,
   transitionDuration = 0.45
+) {
+  const fade = Math.min(
+    transitionDuration,
+    Math.max(
+      0.05,
+      firstDuration / 3
+    ),
+    Math.max(
+      0.05,
+      secondDuration / 3
+    )
+  );
+
+  const offset =
+    Math.max(
+      0.05,
+      firstDuration - fade
+    );
+
+  const filter =
+    `[0:v]settb=AVTB,format=yuv420p[v0];` +
+    `[1:v]settb=AVTB,format=yuv420p[v1];` +
+    `[v0][v1]xfade=` +
+    `transition=fade:` +
+    `duration=${fade.toFixed(3)}:` +
+    `offset=${offset.toFixed(3)},` +
+    `format=yuv420p,settb=AVTB[v]`;
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-loglevel",
+      "error",
+      "-y",
+
+      "-i",
+      firstPath,
+
+      "-i",
+      secondPath,
+
+      "-filter_complex",
+      filter,
+
+      "-map",
+      "[v]",
+
+      "-an",
+
+      "-c:v",
+      "libx264",
+
+      "-preset",
+      "veryfast",
+
+      "-crf",
+      "19",
+
+      "-pix_fmt",
+      "yuv420p",
+
+      "-movflags",
+      "+faststart",
+
+      outputPath
+    ]
+  );
+
+  return (
+    firstDuration +
+    secondDuration -
+    fade
+  );
+}
+
+async function buildCrossfadedTimeline(
+  scenePaths,
+  durations,
+  outputPath
 ) {
   if (scenePaths.length === 1) {
     await fs.copyFile(
@@ -541,28 +668,12 @@ async function crossfadeScenes(
       outputPath
     );
 
-    return;
+    return durations[0];
   }
 
-  const inputs = [];
-  const graph = [];
+  let currentPath =
+    scenePaths[0];
 
-  for (
-    let i = 0;
-    i < scenePaths.length;
-    i++
-  ) {
-    inputs.push(
-      "-i",
-      scenePaths[i]
-    );
-
-    graph.push(
-      `[${i}:v]settb=AVTB,format=yuv420p[v${i}]`
-    );
-  }
-
-  let currentLabel = "v0";
   let currentDuration =
     durations[0];
 
@@ -571,42 +682,81 @@ async function crossfadeScenes(
     i < scenePaths.length;
     i++
   ) {
-    const fade = Math.min(
-      transitionDuration,
-      Math.max(
-        0.05,
-        durations[i - 1] / 3
-      ),
-      Math.max(
-        0.05,
-        durations[i] / 3
-      )
-    );
+    const nextPath =
+      scenePaths[i];
 
-    const offset = Math.max(
-      0,
-      currentDuration - fade
-    );
+    const nextDuration =
+      durations[i];
 
-    const outLabel =
-      `xf${i}`;
-
-    graph.push(
-      `[${currentLabel}][v${i}]xfade=transition=fade:duration=${fade.toFixed(
-        3
-      )}:offset=${offset.toFixed(
-        3
-      )},format=yuv420p[${outLabel}]`
-    );
-
-    currentLabel =
-      outLabel;
+    const pairOutput =
+      path.join(
+        path.dirname(outputPath),
+        `crossfade-${i}.mp4`
+      );
 
     currentDuration =
-      currentDuration +
-      durations[i] -
-      fade;
+      await crossfadePair(
+        currentPath,
+        nextPath,
+        currentDuration,
+        nextDuration,
+        pairOutput
+      );
+
+    if (
+      currentPath !==
+      scenePaths[0]
+    ) {
+      await fs.rm(
+        currentPath,
+        {
+          force: true
+        }
+      );
+    }
+
+    currentPath =
+      pairOutput;
   }
+
+  await fs.rename(
+    currentPath,
+    outputPath
+  );
+
+  return currentDuration;
+}
+
+/*
+ * If crossfades shortened the visual timeline,
+ * extend the final frame so the video still covers
+ * the complete narration.
+ */
+async function padVisualToAudio(
+  visualPath,
+  targetDuration,
+  outputPath
+) {
+  const visualDuration =
+    await getMediaDuration(
+      visualPath
+    );
+
+  if (
+    visualDuration >=
+    targetDuration - 0.05
+  ) {
+    await fs.copyFile(
+      visualPath,
+      outputPath
+    );
+
+    return;
+  }
+
+  const extra =
+    targetDuration -
+    visualDuration;
 
   await execFileAsync(
     "ffmpeg",
@@ -614,21 +764,33 @@ async function crossfadeScenes(
       "-loglevel",
       "error",
       "-y",
-      ...inputs,
-      "-filter_complex",
-      graph.join(";"),
-      "-map",
-      `[${currentLabel}]`,
+
+      "-i",
+      visualPath,
+
+      "-vf",
+      `tpad=stop_mode=clone:stop_duration=${extra}`,
+
+      "-t",
+      String(targetDuration),
+
+      "-an",
+
       "-c:v",
       "libx264",
+
       "-preset",
       "veryfast",
+
       "-crf",
-      "18",
+      "19",
+
       "-pix_fmt",
       "yuv420p",
+
       "-movflags",
       "+faststart",
+
       outputPath
     ]
   );
@@ -653,19 +815,21 @@ app.get(
 app.get(
   "/test-render",
   async (req, res) => {
-    const testFilename =
+    const filename =
       "railway-test.mp4";
 
     const testPath =
       path.join(
         OUTPUT_DIR,
-        testFilename
+        filename
       );
 
     try {
       await fs.mkdir(
         OUTPUT_DIR,
-        { recursive: true }
+        {
+          recursive: true
+        }
       );
 
       await execFileAsync(
@@ -674,25 +838,36 @@ app.get(
           "-loglevel",
           "error",
           "-y",
+
           "-f",
           "lavfi",
+
           "-i",
           "color=c=black:s=1280x720:d=5",
+
           "-f",
           "lavfi",
+
           "-i",
           "sine=frequency=440:duration=5",
+
           "-c:v",
           "libx264",
+
           "-pix_fmt",
           "yuv420p",
+
           "-c:a",
           "aac",
+
           "-b:a",
           "192k",
+
           "-shortest",
+
           "-movflags",
           "+faststart",
+
           testPath
         ]
       );
@@ -704,7 +879,7 @@ app.get(
         output_url:
           `${req.protocol}://${req.get(
             "host"
-          )}/files/${testFilename}`
+          )}/files/${filename}`
       });
     } catch (error) {
       console.error(error);
@@ -835,10 +1010,11 @@ app.post(
       const {
         width,
         height
-      } = getOutputSize(
-        aspect_ratio,
-        resolution
-      );
+      } =
+        getOutputSize(
+          aspect_ratio,
+          resolution
+        );
 
       await fs.mkdir(
         OUTPUT_DIR,
@@ -860,6 +1036,9 @@ app.post(
         }
       );
 
+      /*
+       * Download narration.
+       */
       const audioPath =
         path.join(
           workDir,
@@ -876,6 +1055,9 @@ app.post(
           audioPath
         );
 
+      /*
+       * Narration controls the complete timeline.
+       */
       const durations =
         normalizeScenes(
           scenes,
@@ -884,6 +1066,9 @@ app.post(
 
       const scenePaths = [];
 
+      /*
+       * Render every scene independently.
+       */
       for (
         let i = 0;
         i < scenes.length;
@@ -892,6 +1077,10 @@ app.post(
         const scene =
           scenes[i];
 
+        /*
+         * Prefer video_url.
+         * Fall back to image_url.
+         */
         const mediaUrl =
           scene.video_url ||
           scene.image_url;
@@ -912,17 +1101,13 @@ app.post(
         const inputPath =
           path.join(
             workDir,
-            `source-${
-              i + 1
-            }${extension}`
+            `source-${i + 1}${extension}`
           );
 
         const outputPath =
           path.join(
             workDir,
-            `scene-${
-              i + 1
-            }.mp4`
+            `scene-${i + 1}.mp4`
           );
 
         await downloadFile(
@@ -946,18 +1131,44 @@ app.post(
         );
       }
 
+      /*
+       * Crossfade sequentially.
+       *
+       * Only two videos are processed at
+       * any one time.
+       */
       const visualPath =
         path.join(
           workDir,
           "visual.mp4"
         );
 
-      await crossfadeScenes(
+      const crossfadedPath =
+        path.join(
+          workDir,
+          "crossfaded.mp4"
+        );
+
+      await buildCrossfadedTimeline(
         scenePaths,
         durations,
+        crossfadedPath
+      );
+
+      /*
+       * Make absolutely sure the visual track
+       * covers the complete narration.
+       */
+      await padVisualToAudio(
+        crossfadedPath,
+        audioDuration,
         visualPath
       );
 
+      /*
+       * Generate subtitles from the ACTUAL
+       * voiceover audio.
+       */
       let subtitlePath =
         null;
 
@@ -978,13 +1189,10 @@ app.post(
       } else if (
         subtitles
       ) {
-        const {
-          transcription
-        } =
+        const transcription =
           await transcribeAudio(
             audioPath,
-            subtitle_language,
-            workDir
+            subtitle_language
           );
 
         subtitlePath =
@@ -1007,6 +1215,9 @@ app.post(
         );
       }
 
+      /*
+       * Final export.
+       */
       const finalFilename =
         `${job_id}.mp4`;
 
@@ -1018,8 +1229,10 @@ app.post(
 
       const finalArgs = [
         "-y",
+
         "-i",
         visualPath,
+
         "-i",
         audioPath
       ];
@@ -1034,33 +1247,50 @@ app.post(
       finalArgs.push(
         "-map",
         "0:v:0",
+
         "-map",
         "1:a:0",
+
         "-r",
         String(
           normalizedFps
         ),
+
         "-c:v",
         "libx264",
+
         "-preset",
         "medium",
+
         "-crf",
         "18",
+
         "-pix_fmt",
         "yuv420p",
+
         "-profile:v",
         "high",
+
         "-level",
         "4.1",
+
         "-c:a",
         "aac",
+
         "-b:a",
         "192k",
+
         "-af",
         "loudnorm=I=-14:TP=-1.5:LRA=11",
-        "-shortest",
+
+        "-t",
+        String(
+          audioDuration
+        ),
+
         "-movflags",
         "+faststart",
+
         finalVideoPath
       );
 
@@ -1097,7 +1327,10 @@ app.post(
           )}/files/${finalFilename}`
       });
     } catch (error) {
-      console.error(error);
+      console.error(
+        "RENDER ERROR:",
+        error
+      );
 
       return res
         .status(
