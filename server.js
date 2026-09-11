@@ -486,105 +486,99 @@ async function createSceneVideo({
   height,
   isImage
 }) {
+  const dir = path.dirname(outputPath);
+
   let safeInputPath = inputPath;
   let normalizedPath = null;
 
   try {
-    // Large Base44 images can cause FFmpeg to use excessive
-    // resources when the same image is decoded twice.
-    // Normalize images before cinematic processing.
+    // Normalize large images before rendering.
+    // This prevents very large JPEGs from consuming excessive memory.
     if (isImage) {
       normalizedPath = path.join(
-        path.dirname(outputPath),
+        dir,
         `normalized-${crypto.randomUUID()}.jpg`
       );
 
-      await execFileAsync("ffmpeg", [
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        inputPath,
-        "-vf",
-        "scale=2048:2048:force_original_aspect_ratio=decrease:flags=lanczos",
-        "-frames:v",
-        "1",
-        "-q:v",
-        "2",
-        normalizedPath
-      ]);
+      await execFileAsync(
+        "ffmpeg",
+        [
+          "-loglevel", "error",
+          "-y",
+          "-i", inputPath,
+          "-vf",
+          "scale=2048:2048:force_original_aspect_ratio=decrease:flags=fast_bilinear",
+          "-frames:v", "1",
+          "-q:v", "2",
+          normalizedPath
+        ],
+        {
+          maxBuffer: 50 * 1024 * 1024
+        }
+      );
 
       safeInputPath = normalizedPath;
     }
 
+    /*
+     * IMPORTANT:
+     * Use ONE video stream only.
+     *
+     * The previous version created a blurred background AND
+     * a foreground stream at the same time. Railway was killing
+     * FFmpeg because of the extra memory usage.
+     *
+     * This version fills the entire 16:9 frame with one stream.
+     * No black bars. Crossfades are still handled later.
+     */
+
     const inputArgs = isImage
       ? [
-          "-loop",
-          "1",
-          "-i",
-          safeInputPath,
-          "-loop",
-          "1",
-          "-i",
-          safeInputPath
+          "-loop", "1",
+          "-framerate", "30",
+          "-i", safeInputPath
         ]
       : [
-          "-stream_loop",
-          "-1",
-          "-i",
-          safeInputPath,
-          "-stream_loop",
-          "-1",
-          "-i",
-          safeInputPath
+          "-stream_loop", "-1",
+          "-i", safeInputPath
         ];
 
-    const filter = [
-      `[0:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},boxblur=4:1,eq=brightness=-0.14:saturation=0.82,format=yuv420p[bg]`,
+    const videoFilter =
+      `fps=30,` +
+      `scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,` +
+      `crop=${width}:${height},` +
+      `eq=brightness=-0.04:contrast=1.03:saturation=0.92,` +
+      `format=yuv420p`;
 
-      `[1:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p[fg]`,
+    await execFileAsync(
+      "ffmpeg",
+      [
+        "-loglevel", "error",
+        "-y",
 
-      `[bg][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p,settb=AVTB[v]`
-    ].join(";");
+        ...inputArgs,
 
-    await execFileAsync("ffmpeg", [
-      "-loglevel",
-      "error",
-      "-y",
+        "-vf", videoFilter,
 
-      ...inputArgs,
+        "-t", String(duration),
+        "-r", "30",
 
-      "-filter_complex",
-      filter,
+        "-an",
 
-      "-map",
-      "[v]",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "21",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
 
-      "-t",
-      String(duration),
+        outputPath
+      ],
+      {
+        maxBuffer: 50 * 1024 * 1024
+      }
+    );
 
-      "-r",
-      "30",
-
-      "-an",
-
-      "-c:v",
-      "libx264",
-
-      "-preset",
-      "veryfast",
-
-      "-crf",
-      "19",
-
-      "-pix_fmt",
-      "yuv420p",
-
-      "-movflags",
-      "+faststart",
-
-      outputPath
-    ]);
+    return;
   } finally {
     if (normalizedPath) {
       await fs.rm(normalizedPath, {
