@@ -540,7 +540,7 @@ async function createSceneVideo({
         ];
 
     const filter = [
-      `[0:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},boxblur=12:2,eq=brightness=-0.14:saturation=0.82,format=yuv420p[bg]`,
+      `[0:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=increase:flags=fast_bilinear,crop=${width}:${height},boxblur=4:1,eq=brightness=-0.14:saturation=0.82,format=yuv420p[bg]`,
 
       `[1:v]fps=30,scale=${width}:${height}:force_original_aspect_ratio=decrease:flags=lanczos,format=yuv420p[fg]`,
 
